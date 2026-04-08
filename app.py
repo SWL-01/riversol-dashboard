@@ -791,8 +791,8 @@ Please generate your full strategic analysis now.
 with tab_cohort:
     st.subheader("Cohort Analysis")
     st.caption(
-        "500 completed 15-day trials · "
-        "AI-generated data analyst summary via Gemini · "
+        "500 completed 15-day trials· "
+        "AI-generated data analyst summary· "
         "In production: replace synthetic data with a live Shopify / Supabase query."
     )
 
@@ -938,18 +938,12 @@ with tab_cohort:
 
     # ── AI Executive Summary ──────────────────────────────────
     st.markdown("### AI Data Analyst Summary")
-    st.caption(
-        "Click below to send the aggregated cohort statistics to Gemini. "
-        "The model is prompted to respond as a Senior Data Scientist and "
-        "will return a structured technical report covering signal analysis, "
-        "model observations, and pipeline improvement recommendations."
-    )
 
     if st.button("Generate AI Data Analyst Summary", type="primary", key="cohort_llm_btn"):
         user_prompt = build_cohort_user_prompt(df_cohort)
 
         if GEMINI_API_KEY:
-            with st.spinner("Gemini is analysing the cohort data..."):
+            with st.spinner("Analysing the cohort data..."):
                 try:
                     llm = genai.GenerativeModel(
                         model_name="gemini-2.5-flash",
