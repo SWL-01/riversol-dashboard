@@ -622,7 +622,7 @@ with tab_outreach:
     Keep it under 150 words. Include a subject line.
     """
                 if GEMINI_API_KEY:
-                    with st.spinner("Generating via Gemini..."):
+                    with st.spinner("Generating..."):
                         try:
                             llm = genai.GenerativeModel("gemini-2.5-flash")
                             resp = llm.generate_content(prompt)
@@ -645,7 +645,7 @@ with tab_outreach:
 
         st.divider()
         st.caption(
-            "Production flow: score >= 0.55 triggers draft generation via Gemini API, "
+            "Production flow: score >= 0.55 triggers draft generation, "
             "draft is queued in Klaviyo for review, sent on approval."
         )
 
