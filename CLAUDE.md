@@ -1,5 +1,3 @@
-This project is to prepare for an interview today.
-
 Company name: Riversol
 
 Company Profile & Culture
