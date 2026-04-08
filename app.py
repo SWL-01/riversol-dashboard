@@ -298,6 +298,7 @@ tab_overview, tab_cohort, tab_customers, tab_score, tab_outreach = st.tabs([
 # ─────────────────────────────────────────────────────────────
 
 with tab_overview:
+    st.caption("Live propensity scores and engagement signals for the 300 customers currently in their 15-day trial.")
     active     = df_customers[df_customers["converted"].isna()]
     high_leads = df_customers[df_customers["propensity_score"] >= 0.60]
 
@@ -342,49 +343,90 @@ with tab_overview:
     row2a, row2b = st.columns(2)
 
     with row2a:
-        fig3 = px.scatter(df_customers, x="email_ctr", y="propensity_score",
-                          color="skin_concern",
-                          hover_data=["name","product_kit","age_range"],
-                          title="Email CTR vs conversion score",
-                          labels={"email_ctr":"Email CTR",
-                                  "propensity_score":"Conversion score"},
-                          opacity=0.65)
-        fig3.update_layout(height=340, margin=dict(l=0,r=0,t=40,b=0))
+        # Model lift chart: score buckets (from completed cohort) vs actual conversion rate.
+        # Shows the model's real discriminative power — NOT an input vs its own output.
+        df_cohort["score_bucket"] = pd.cut(
+            df_cohort["propensity_score"],
+            bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            labels=["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"],
+        )
+        lift_df = (
+            df_cohort.groupby("score_bucket", observed=True)
+            .agg(conv_rate=("converted", "mean"), n=("converted", "count"))
+            .reset_index()
+        )
+        lift_baseline = df_cohort["converted"].mean()
+        fig3 = px.bar(
+            lift_df, x="score_bucket", y="conv_rate",
+            title="Model lift — actual conversion rate by score bucket",
+            labels={"score_bucket": "Score bucket", "conv_rate": "Actual conv. rate"},
+            color="conv_rate",
+            color_continuous_scale=["#E24B4A", "#f7c59f", "#1D9E75"],
+            text=lift_df["conv_rate"].map(lambda x: f"{x:.0%}"),
+        )
+        fig3.add_hline(y=lift_baseline, line_dash="dot", line_color="#555",
+                       annotation_text=f"Baseline {lift_baseline:.1%}",
+                       annotation_position="top right")
+        fig3.update_traces(textposition="outside", showlegend=False)
+        fig3.update_layout(height=340, margin=dict(l=0, r=0, t=40, b=0),
+                           coloraxis_showscale=False)
         st.plotly_chart(fig3, use_container_width=True)
 
     with row2b:
-        skin_counts = df_customers["skin_type"].value_counts().reset_index()
-        skin_counts.columns = ["skin_type","count"]
-        fig4 = px.pie(skin_counts, names="skin_type", values="count",
-                      hole=0.45, title="Customers by skin type",
-                      color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig4.update_layout(height=340, margin=dict(l=0,r=0,t=40,b=20))
+        # High-priority leads (score ≥ 60%) broken down by province.
+        # Province is a real customer attribute — useful for regional campaign targeting.
+        prov_df = (
+            df_customers.groupby("province")
+            .agg(
+                total=("propensity_score", "count"),
+                high_priority=("propensity_score", lambda x: (x >= 0.60).sum()),
+            )
+            .reset_index()
+            .sort_values("high_priority", ascending=False)
+        )
+        prov_df["high_pct"] = prov_df["high_priority"] / prov_df["total"]
+        fig4 = px.bar(
+            prov_df, x="province", y="high_priority",
+            title="High-priority leads by province (score ≥ 60%)",
+            labels={"province": "Province", "high_priority": "High-priority customers"},
+            color="high_pct",
+            color_continuous_scale=["#f7c59f", "#1D9E75"],
+            text=prov_df["high_priority"],
+        )
+        fig4.update_traces(textposition="outside", showlegend=False)
+        fig4.update_layout(height=340, margin=dict(l=0, r=0, t=40, b=20),
+                           coloraxis_showscale=False)
         st.plotly_chart(fig4, use_container_width=True)
 
-    row3a, row3b = st.columns(2)
-
-    with row3a:
-        cohort = (df_customers.groupby("trial_start").size()
-                  .reset_index(name="new_trials"))
-        fig5 = px.bar(cohort, x="trial_start", y="new_trials",
-                      title="Trial starts by date",
-                      labels={"trial_start":"Date","new_trials":"Customers"},
-                      color_discrete_sequence=["#4A6FA5"])
-        fig5.update_layout(height=280, margin=dict(l=0,r=0,t=40,b=0))
-        st.plotly_chart(fig5, use_container_width=True)
-
-    with row3b:
-        kit_avg = (df_customers.groupby("product_kit")["propensity_score"]
-                   .mean().reset_index().sort_values("propensity_score", ascending=False))
-        fig6 = px.bar(kit_avg, x="product_kit", y="propensity_score",
-                      title="Mean conversion score by product kit",
-                      labels={"product_kit":"Kit","propensity_score":"Mean score"},
-                      color_discrete_sequence=["#4A6FA5"],
-                      text=kit_avg["propensity_score"].map(lambda x: f"{x:.0%}"))
-        fig6.update_traces(textposition="outside")
-        fig6.update_layout(height=280, margin=dict(l=0,r=0,t=40,b=0),
-                           xaxis_tickangle=-20)
-        st.plotly_chart(fig6, use_container_width=True)
+    # Urgency chart: high-score leads grouped by days remaining in trial.
+    # Directly actionable — shows which customers need outreach NOW vs later.
+    active_df = df_customers[df_customers["days_left"] > 0].copy()
+    active_df["days_bucket"] = pd.cut(
+        active_df["days_left"],
+        bins=[0, 3, 7, 15],
+        labels=["1–3 days (urgent)", "4–7 days", "8–15 days"],
+    )
+    urgency_df = (
+        active_df.groupby("days_bucket", observed=True)
+        .agg(
+            high_leads=("propensity_score", lambda x: (x >= 0.60).sum()),
+            total=("propensity_score", "count"),
+            mean_score=("propensity_score", "mean"),
+        )
+        .reset_index()
+    )
+    fig5 = px.bar(
+        urgency_df, x="days_bucket", y="high_leads",
+        title="High-score leads by days remaining (outreach urgency)",
+        labels={"days_bucket": "Days remaining", "high_leads": "High-score leads (≥60%)"},
+        color="mean_score",
+        color_continuous_scale=["#f7c59f", "#1D9E75"],
+        text=urgency_df["high_leads"],
+    )
+    fig5.update_traces(textposition="outside")
+    fig5.update_layout(height=280, margin=dict(l=0, r=0, t=40, b=0),
+                       coloraxis_showscale=False)
+    st.plotly_chart(fig5, use_container_width=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -393,6 +435,7 @@ with tab_overview:
 
 with tab_customers:
     st.subheader("Customer records")
+    st.caption("Searchable and filterable record of all trial customers, ranked by propensity score.")
 
     fc1, fc2, fc3 = st.columns(3)
     f_concern = fc1.multiselect("Skin concern", SKIN_CONCERNS, default=SKIN_CONCERNS)
@@ -439,7 +482,7 @@ with tab_customers:
 
 with tab_score:
     st.subheader("Individual customer scoring")
-    st.caption("Data source: Shopify + Supabase (production) · synthetic data (demo)")
+    st.caption("Run the XGBoost model on any customer profile to get an instant conversion probability estimate.")
 
     left, right = st.columns([1, 2])
 
@@ -548,6 +591,7 @@ with tab_score:
 
 with tab_outreach:
     st.subheader("Email outreach")
+    st.caption("Generate personalized email drafts for high-score leads using the Gemini API.")
 
     # Get the top leads
     top_leads = df_customers[df_customers["propensity_score"] >= 0.55].sort_values(
@@ -790,11 +834,7 @@ Please generate your full strategic analysis now.
 
 with tab_cohort:
     st.subheader("Cohort Analysis")
-    st.caption(
-        "500 completed 15-day trials· "
-        "AI-generated data analyst summary· "
-        "In production: replace synthetic data with a live Shopify / Supabase query."
-    )
+    st.caption("Actual conversion rates from 500 completed trials, segmented by skin concern and age group with an AI-generated analyst summary.")
 
     # df_cohort is loaded at startup — no per-tab generation needed.
 
@@ -889,50 +929,29 @@ with tab_cohort:
         )
         st.plotly_chart(fig_age, use_container_width=True)
 
-    # ── Row 2: Skin Type heatmap (concern × age) ─────────────
-    ch_col3, ch_col4 = st.columns([1, 2])
-
-    with ch_col3:
-        fig_skin = px.bar(
-            agg_skin.sort_values("conversion_rate"),
-            x="conversion_rate",
-            y="skin_type",
-            orientation="h",
-            title="Conversion Rate by Skin Type",
-            labels={"conversion_rate": "Conv. rate", "skin_type": ""},
-            color="conversion_rate",
-            color_continuous_scale=["#E24B4A", "#f7c59f", "#1D9E75"],
-            text=agg_skin["conversion_rate"].map(lambda x: f"{x:.1%}"),
-        )
-        fig_skin.update_traces(textposition="outside")
-        fig_skin.update_layout(
-            height=320, margin=dict(l=0, r=30, t=45, b=0),
-            coloraxis_showscale=False,
-        )
-        st.plotly_chart(fig_skin, use_container_width=True)
-
-    with ch_col4:
-        # Pivot: skin concern (rows) × age range (cols) → conv. rate
-        heatmap_df = (
-            df_cohort.groupby(["skin_concern", "age_range"])["converted"]
-            .mean()
-            .unstack("age_range")
-            .reindex(columns=AGE_RANGES)          # enforce chronological order
-        )
-        fig_heat = px.imshow(
-            heatmap_df,
-            color_continuous_scale=["#E24B4A", "#f7f7f7", "#1D9E75"],
-            zmin=0, zmax=1,
-            text_auto=".0%",
-            title="Conversion Rate Heatmap — Concern × Age",
-            labels={"x": "Age group", "y": "Skin concern", "color": "Conv. rate"},
-            aspect="auto",
-        )
-        fig_heat.update_layout(
-            height=320, margin=dict(l=0, r=0, t=45, b=0),
-            coloraxis_showscale=True,
-        )
-        st.plotly_chart(fig_heat, use_container_width=True)
+    # ── Row 2: Concern × Age heatmap (full width) ────────────
+    # Skin type removed — it has no log-odds weight and carries no conversion signal.
+    # The concern × age cross is the richest segment view in the dataset.
+    heatmap_df = (
+        df_cohort.groupby(["skin_concern", "age_range"])["converted"]
+        .mean()
+        .unstack("age_range")
+        .reindex(columns=AGE_RANGES)          # enforce chronological order
+    )
+    fig_heat = px.imshow(
+        heatmap_df,
+        color_continuous_scale=["#E24B4A", "#f7f7f7", "#1D9E75"],
+        zmin=0, zmax=1,
+        text_auto=".0%",
+        title="Conversion Rate Heatmap — Concern × Age",
+        labels={"x": "Age group", "y": "Skin concern", "color": "Conv. rate"},
+        aspect="auto",
+    )
+    fig_heat.update_layout(
+        height=360, margin=dict(l=0, r=0, t=45, b=0),
+        coloraxis_showscale=True,
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
 
     st.divider()
 
